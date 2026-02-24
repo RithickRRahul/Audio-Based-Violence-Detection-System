@@ -1,0 +1,42 @@
+# User specific ignores as requested
+.agent/
+agent/
+docs/
+references/
+
+# Large Data & Machine Learning Models
+datasets/
+saved_models/
+
+# Python Virtual Environments
+.venv/
+venv/
+env/
+
+# Python Caches & Compiled files
+__pycache__/
+.mypy_cache/
+.pytest_cache/
+.ruff_cache/
+*.py[cod]
+*$py.class
+
+# Logs and Local Test Outputs
+*.log
+*out*.txt
+*output*.txt
+
+# Node.js / Frontend Builds
+node_modules/
+dist/
+build/
+.npm/
+
+# Environment Variables
+.env
+.env.local
+.env.*.local
+
+# OS Generated Files
+.DS_Store
+Thumbs.db
