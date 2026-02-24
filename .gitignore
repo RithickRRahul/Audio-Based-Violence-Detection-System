@@ -3,9 +3,8 @@
 agent/
 references/
 
-# Large Data & Machine Learning Models
+# Large Data (Ignored)
 datasets/
-saved_models/
 
 # Python Virtual Environments
 .venv/

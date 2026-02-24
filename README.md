@@ -1,6 +1,6 @@
 # CMAG-v2: Custom Multimodal Violence Detection System
 
-An enterprise-grade, real-time violence detection pipeline built for high-stakes societal impact (e.g., public safety, women's safety). It fuses environmental audio analysis with natural language processing to accurately identify violent intent, physical impacts, and escalation trends with near-zero latency.
+A real-time violence detection pipeline built for high-stakes societal impact (e.g., public safety, women's safety). It fuses environmental audio analysis with natural language processing to accurately identify violent intent, physical impacts, and escalation trends with near-zero latency.
 
 ## 🚀 The Core Problem & Solution
 
@@ -9,6 +9,54 @@ Traditional audio surveillance relies solely on volume thresholds or basic keywo
 By utilizing a **Custom Cross-Modal Attention Gate (CMAG-v2)**, the system adaptively weighs the acoustic modality versus the text modality to determine the true threat level, evaluating danger deterministically across sliding temporal windows.
 
 ## 🧠 System Architecture
+
+```mermaid
+graph TD
+    %% Define Styles
+    classDef input fill:#2d3436,stroke:#b2bec3,stroke-width:2px,color:#fff
+    classDef gateway fill:#0984e3,stroke:#74b9ff,stroke-width:2px,color:#fff
+    classDef branch fill:#6c5ce7,stroke:#a29bfe,stroke-width:2px,color:#fff
+    classDef core fill:#d63031,stroke:#fab1a0,stroke-width:2px,color:#fff
+    classDef output fill:#00b894,stroke:#55efc4,stroke-width:2px,color:#fff
+    classDef fallback fill:#e17055,stroke:#ffeaa7,stroke-width:2px,color:#fff
+
+    %% Components
+    A["🎤 Live Audio Stream (WebSockets / Files)"]:::input
+    B{"FastVAD (Librosa)"}:::gateway
+    
+    %% Audio Branch
+    C["Mel-Spectrogram Extraction"]:::branch
+    D["Audio Encoder (ResNet-18)"]:::branch
+    
+    %% Text / NLP Branch
+    E{"Speech Detected?"}:::gateway
+    F["Whisper (STT)"]:::branch
+    G["Text Encoder (RoBERTa)"]:::branch
+    H["Scream/Impact Failsafe"]:::fallback
+    
+    %% Fusion and Output
+    I{"CMAG-v2\n(Cross-Modal Attention Gate)"}:::core
+    J["Deterministic Temporal Tracker\n(Spike, Rising, Sustained)"]:::core
+    K["🛡️ Final Verdict\n[SAFE / VIOLENCE]"]:::output
+
+    %% Flow
+    A --> B
+    B --> C
+    C --> D
+    
+    B --> E
+    E -- "Yes" --> F
+    F --> G
+    F -.-> H
+    E -- "No" --> |Silent NLP Vector| I
+    C -.-> H
+    
+    D --> I
+    G --> I
+    H -- "Override Signal" --> J
+    I --> J
+    J --> K
+```
 
 ### 1. The Gateway: Fast-VAD
 To prevent the system from wasting GPU cycles and hallucinating text on silent rooms or pure noise, incoming audio is first routed through a **Rule-Based Voice Activity Detector (`FastVAD`)**.
@@ -113,17 +161,3 @@ python scripts/simulate_yamnet_metrics.py
 
 ---
 
-## ☁️ Deployment Architecture (Vercel & Inference)
-
-### Handling Models & The Cloud
-**Machine Learning models (`saved_models/`) are NOT uploaded to this GitHub repository.** 
-
-Why? Because GitHub is designed for text/code, not large >50MB binary tensors. 
-
-**So how do we deploy to Vercel?**
-Vercel is strictly a **Frontend / Serverless** hosting provider. They do not have the GPU capacity or persistent disk storage required to run heavy PyTorch inference pipelines natively.
-
-**The Production Solution:**
-1.  **Backend (The AI Engine):** The FastAPI code (`/backend` + `/src` + models) is hosted on a dedicated cloud provider built for ML inference (e.g., Render, Railway, AWS EC2, or Google Cloud Run). The heavy models are stored securely in cloud storage (like AWS S3) and downloaded locally by the backend server when it boots up.
-2.  **Frontend (The UI):** The React interface (`/frontend`) is hooked up to GitHub and deployed directly onto Vercel. 
-3.  **The Link:** The deployed Vercel frontend is configured via Environment Variables to send its audio streams directly to the IP address of your dedicated Backend Inference Server!
