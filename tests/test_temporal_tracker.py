@@ -23,7 +23,8 @@ def test_rising_trend():
         result = tracker.update(score)
         
     assert result["trend"] == "rising"
-    assert result["escalation_score"] >= 0.8  # Maintains the highest recent threat
+    import math
+    assert math.isclose(result["escalation_score"], 0.8, rel_tol=1e-5) or result["escalation_score"] >= 0.8
 
 def test_sustained_aggression():
     tracker = RuleBasedTemporalTracker(window_size=5)

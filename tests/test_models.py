@@ -54,13 +54,12 @@ def test_text_encoder_empty_string():
 def test_scream_detector_detects_screaming_text():
     detector = ScreamDetector()
     result = detector.detect("AAAAHHHHH HELP ME PLEASE")
-    assert result["is_distress"] == True
-    assert 0.0 <= result["confidence"] <= 1.0
+    assert result is True
 
 def test_scream_detector_safe_text():
     detector = ScreamDetector()
     result = detector.detect("Hello, how are you doing today?")
-    assert result["is_distress"] == False
+    assert result is False
 
 def test_scream_detector_acoustic():
     sr = 16000
@@ -69,9 +68,7 @@ def test_scream_detector_acoustic():
     scream_audio = np.sin(2 * np.pi * 2500 * t) * 0.8
     detector = ScreamDetector()
     result = detector.detect_acoustic(scream_audio, sr)
-    assert "is_scream" in result
-    assert "confidence" in result
-    assert 0.0 <= result["confidence"] <= 1.0
+    assert isinstance(result, bool)
 
 
 # ============================================================

@@ -1,7 +1,6 @@
 # User specific ignores as requested
 .agent/
 agent/
-docs/
 references/
 
 # Large Data & Machine Learning Models

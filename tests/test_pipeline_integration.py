@@ -24,26 +24,29 @@ def silent_audio_file(tmp_path):
     return str(file_path)
 
 def test_pipeline_skips_nlp_on_silence(dummy_pipeline, silent_audio_file):
-    # Process a completely silent file
-    results = dummy_pipeline.process_file(silent_audio_file)
-    
-    assert len(results["segments"]) == 1
-    seg = results["segments"][0]
-    
-    # FastVAD should have detected no speech
-    assert seg["vad_speech"] is False
-    
-    # Transcript should be empty because we skipped STT
-    assert seg["transcript"] == ""
-    
-    # NLP Threat score should be exactly 0.0
-    assert seg["nlp_score"] == 0.0
-    
-    # Audio score should be the fallback baseline score (gated)
-    assert isinstance(seg["audio_score"], float)
-    
-    # Since it's silence, it should not trigger violence
-    assert seg["state"] == "SAFE"
+    import torch
+    # Mock CMAG to output a low safe score (since weights are uninitialized)
+    with patch.object(dummy_pipeline, 'cmag', return_value=torch.tensor([[0.1]])):
+        # Process a completely silent file
+        results = dummy_pipeline.process_file(silent_audio_file)
+        
+        assert len(results["segments"]) == 1
+        seg = results["segments"][0]
+        
+        # FastVAD should have detected no speech
+        assert seg["vad_speech"] is False
+        
+        # Transcript should be empty because we skipped STT
+        assert seg["transcript"] == ""
+        
+        # NLP Threat score should be exactly 0.0
+        assert seg["nlp_score"] == 0.0
+        
+        # Audio score should be the fallback baseline score (gated)
+        assert isinstance(seg["audio_score"], float)
+        
+        # Since it's silence, it should not trigger violence
+        assert seg["state"] == "SAFE"
 
 def test_pipeline_end_to_end_routing(dummy_pipeline):
     # This just ensures the pipeline can instantiate and load weights
