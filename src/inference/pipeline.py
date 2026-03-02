@@ -7,7 +7,7 @@ from src.config import (
     SAVED_MODELS_DIR
 )
 from src.data.audio_utils import load_audio, segment_audio, extract_mel_spectrogram
-from src.models.audio_encoder import AudioEncoder
+from src.models.audio_encoder import HybridAudioEncoder
 from src.models.nlp_encoder import TextEncoder
 from src.models.scream_detector import ScreamDetector
 from src.models.cmag_v2 import EnhancedCMAG
@@ -51,7 +51,7 @@ class ViolenceDetectionPipeline:
         logger.info(f"Initializing on {self.device}...", extra={"extra_info": {"device": str(self.device)}})
         
         # Load all model components
-        self.audio_encoder = AudioEncoder().to(self.device).eval()
+        self.audio_encoder = HybridAudioEncoder().to(self.device).eval()
         self.text_encoder = TextEncoder()
         
         # Threat Detectors
@@ -104,7 +104,7 @@ class ViolenceDetectionPipeline:
             return ""
     
     @torch.no_grad()
-    def process_file(self, file_path: str) -> dict:
+    def process_file(self, file_path: str, ablation_config: dict = None) -> dict:
         """
         Process a single audio file through the full pipeline.
         
@@ -118,6 +118,18 @@ class ViolenceDetectionPipeline:
             - 'temporal_score': file-level violence probability
             - 'final_state': 'VIOLENCE' or 'SAFE'
         """
+        
+        config = {
+            "use_audio": True,
+            "use_nlp": True,
+            "use_cmag": True,
+            "use_scream": True,
+            "use_temporal": True,
+            "use_vad": True
+        }
+        if ablation_config:
+            config.update(ablation_config)
+            
         # Step 1: Load and segment
         y, sr = load_audio(file_path, target_sr=SAMPLE_RATE)
         segments = segment_audio(y, sr, seg_len=SEGMENT_LENGTH)
@@ -139,10 +151,16 @@ class ViolenceDetectionPipeline:
             mel_tensor = torch.FloatTensor(mel_spec).unsqueeze(0).unsqueeze(0).to(self.device)
             
             with torch.no_grad():
-                audio_emb = self.audio_encoder(mel_tensor)
+                if config["use_audio"]:
+                    audio_emb = self.audio_encoder(mel_tensor)
+                else:
+                    audio_emb = torch.zeros((1, 128), device=self.device)
                 
             # Step 2b: FastVAD Check
-            has_speech, vad_details = self.vad.has_speech(seg, sr)
+            if config["use_vad"]:
+                has_speech, vad_details = self.vad.has_speech(seg, sr)
+            else:
+                has_speech = True
             
             transcript = ""
             threat_score = 0.0
@@ -155,7 +173,7 @@ class ViolenceDetectionPipeline:
                 import string
                 cleaned = transcript.translate(str.maketrans('', '', string.punctuation)).strip()
                 
-                if transcript and len(cleaned) >= 4:
+                if transcript and len(cleaned) >= 4 and config["use_nlp"]:
                     text_emb = self.text_encoder.get_embeddings([transcript]).to(self.device)
                     threat_score = self.text_encoder.get_threat_score(transcript)
                 else:
@@ -176,20 +194,36 @@ class ViolenceDetectionPipeline:
             # We ALWAYS route to CMAG because CMAG holds the violence classification head.
             # If `has_speech` is false, it fuses the audio with the zero-vector, ensuring 
             # correct mathematical distribution.
-            with torch.no_grad():
-                seg_score = self.cmag(audio_emb, text_emb, return_features=False)
-            baseline_score = seg_score.item()
+            if config["use_cmag"]:
+                with torch.no_grad():
+                    seg_score = self.cmag(audio_emb, text_emb, return_features=False)
+                baseline_score = seg_score.item()
+            else:
+                baseline_score = max(0.0, min(1.0, threat_score + 0.1)) # Naive proxy score
                 
             # Step 3: Temporal Tracking (Deterministic)
             effective_score = baseline_score
-            if scream_acoustic or scream_text or threat_score > 0.6:
-                effective_score = max(effective_score, 0.85)
-            elif is_impact:
-                # Add a proportional boost for impact transients instead of flatlining
-                effective_score = min(effective_score + 0.25, 0.95)
+            
+            # Explicit Semantic Dampener:
+            # If explicit benign speech is detected without acoustic anomalies, 
+            # the NLP threat score should forcibly pull down any CMAG audio hallucinations
+            # down to a safe zone.
+            if has_speech and transcript and threat_score < 0.4 and not (scream_acoustic or is_impact):
+                effective_score = min(effective_score, threat_score + 0.15)
                 
-            temporal_analysis = self.temporal.update(effective_score)
-            escalation_score = temporal_analysis["escalation_score"]
+            if config["use_scream"]:
+                if scream_acoustic or scream_text or threat_score > 0.6:
+                    effective_score = max(effective_score, 0.85)
+                elif is_impact:
+                    # Add a proportional boost for impact transients instead of flatlining
+                    effective_score = min(effective_score + 0.25, 0.95)
+                
+            if config["use_temporal"]:
+                temporal_analysis = self.temporal.update(effective_score)
+                escalation_score = temporal_analysis["escalation_score"]
+            else:
+                escalation_score = effective_score
+                temporal_analysis = {"trend": "bypass", "escalation_score": escalation_score}
             
             file_max_score = max(file_max_score, escalation_score, effective_score)
             is_violent = escalation_score > 0.5
