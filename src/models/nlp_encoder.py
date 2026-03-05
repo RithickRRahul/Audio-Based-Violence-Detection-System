@@ -1,17 +1,20 @@
+import os
 import torch
 import torch.nn as nn
-from transformers import AutoTokenizer, AutoModel
-from src.config import TEXT_EMBED_DIM
+from transformers import AutoTokenizer, AutoModelForSequenceClassification
+from torch_geometric.data import Batch
+
+from src.config import TEXT_EMBED_DIM, SAVED_MODELS_DIR
+from src.models.graph_encoder import DependencyGNN
+from src.utils.dependency_parser import text_to_dependency_graph
 
 
 class TextEncoder(nn.Module):
     """
-    Text encoder using DistilBERT for rich semantic embeddings.
+    Text encoder using DistilBERT/RoBERTa for rich semantic embeddings.
     
-    Following the embedding-strategies skill:
-    - Uses dense 768-dim CLS embeddings (not scalar scores)
-    - Normalizes embeddings for consistent similarity comparisons
-    - Handles empty/blank text gracefully with preprocessing
+    Updated to use the trained violence expert model from saved_models
+    which contains both the text embeddings and the classification head.
     
     Input: list of strings (transcribed text segments)
     Output: (batch, text_embed_dim=768) dense embeddings
@@ -21,36 +24,51 @@ class TextEncoder(nn.Module):
     - get_embeddings(texts) -> tensor (768-dim embeddings for fusion)
     """
     
-    def __init__(self, model_name: str = "roberta-base", text_embed_dim: int = TEXT_EMBED_DIM):
+    def __init__(self, model_name: str = "albert-base-v2", text_embed_dim: int = TEXT_EMBED_DIM):
         super().__init__()
+        
+        expert_path = os.path.join(SAVED_MODELS_DIR, "nlp_violence_expert")
+        gnn_path = os.path.join(expert_path, "gnn_expert.pth")
+        classifier_path = os.path.join(expert_path, "classifier_expert.pth")
+        
+        if model_name == "roberta-base" and os.path.exists(expert_path):
+            model_name = expert_path
+
         self.tokenizer = AutoTokenizer.from_pretrained(model_name)
-        self.model = AutoModel.from_pretrained(model_name)
+        
+        self.model = AutoModelForSequenceClassification.from_pretrained(model_name)
         self.text_embed_dim = text_embed_dim
         
-        # Classification head for threat scoring
-        self.classifier = nn.Sequential(
+        # Add Dependency GNN
+        self.gnn = DependencyGNN(in_channels=768, hidden_channels=256, out_channels=256)
+        if os.path.exists(gnn_path):
+            try:
+                self.gnn.load_state_dict(torch.load(gnn_path, map_location="cpu"))
+            except RuntimeError:
+                print("Warning: GNN weight shape mismatch. Ignored saved weights.")
+            
+        self.fusion_classifier = nn.Sequential(
             nn.Linear(text_embed_dim, 256),
             nn.ReLU(),
             nn.Dropout(0.3),
-            nn.Linear(256, 1),
-            nn.Sigmoid()
+            nn.Linear(256, 1)
         )
+        if os.path.exists(classifier_path):
+            try:
+                self.fusion_classifier.load_state_dict(torch.load(classifier_path, map_location="cpu"))
+            except RuntimeError:
+                print("Warning: Classifier weight shape mismatch. Ignored saved weights.")
     
     def _preprocess(self, texts: list[str]) -> list[str]:
-        """
-        Preprocess text inputs following embedding-strategies:
-        never skip preprocessing, garbage in garbage out.
-        """
         processed = []
         for text in texts:
             text = text.strip()
             if not text:
-                text = "[empty]"  # Handle blank text gracefully
+                text = "[empty]"
             processed.append(text)
         return processed
     
     def _get_cls_embeddings(self, texts: list[str]) -> torch.Tensor:
-        """Extract CLS token embeddings from DistilBERT."""
         texts = self._preprocess(texts)
         
         inputs = self.tokenizer(
@@ -61,40 +79,66 @@ class TextEncoder(nn.Module):
             return_tensors="pt"
         )
         
-        # Move inputs to same device as model
         device = next(self.model.parameters()).device
         inputs = {k: v.to(device) for k, v in inputs.items()}
         
         with torch.no_grad():
-            outputs = self.model(**inputs)
+            outputs = self.model(**inputs, output_hidden_states=True)
         
-        # RoBERTa cls token embedding
-        cls_embeddings = outputs.last_hidden_state[:, 0, :]
+        cls_embeddings = outputs.hidden_states[-1][:, 0, :]
         return cls_embeddings
     
     def get_embeddings(self, texts: list[str]) -> torch.Tensor:
-        """
-        Get dense semantic embeddings for a list of texts.
-        Returns: (batch, text_embed_dim) tensor
-        """
-        return self._get_cls_embeddings(texts)
+        self.eval()
+        with torch.no_grad():
+            fused_embeddings, _ = self(texts)
+        return fused_embeddings
     
     def get_threat_score(self, text: str) -> float:
-        """
-        Get a threat/toxicity probability for a single text input.
-        Returns: float between 0.0 and 1.0
-        """
-        embeddings = self._get_cls_embeddings([text])
-        score = self.classifier(embeddings)
-        return score.item()
+        self.eval()
+        with torch.no_grad():
+            _, scores = self(texts=[text])
+        return scores[0].item()
     
     def forward(self, texts: list[str]) -> tuple[torch.Tensor, torch.Tensor]:
-        """
-        Full forward pass returning both embeddings and threat scores.
-        Returns: (embeddings, scores) where:
-            - embeddings: (batch, text_embed_dim)
-            - scores: (batch, 1) 
-        """
-        embeddings = self._get_cls_embeddings(texts)
-        scores = self.classifier(embeddings)
-        return embeddings, scores
+        device = next(self.model.parameters()).device
+        texts_processed = self._preprocess(texts)
+        
+        inputs = self.tokenizer(
+            texts_processed, 
+            padding=True, 
+            truncation=True, 
+            max_length=512, 
+            return_tensors="pt"
+        )
+        inputs = {k: v.to(device) for k, v in inputs.items()}
+        
+        # 1. Get semantic text embeddings via Transformer
+        outputs = self.model(**inputs, output_hidden_states=True)
+        seq_embeddings = outputs.hidden_states[-1]
+        text_embeddings = seq_embeddings[:, 0, :]  # CLS token representation
+
+        # 2. Generate dependency trees and attach token features
+        graphs = [text_to_dependency_graph(t) for t in texts_processed]
+        for i, graph in enumerate(graphs):
+            nodes_needed = graph.num_nodes
+            # Exclude [CLS]
+            valid_feats = seq_embeddings[i, 1:]
+            
+            if valid_feats.size(0) >= nodes_needed:
+                graph.x = valid_feats[:nodes_needed]
+            else:
+                padding = torch.zeros((nodes_needed - valid_feats.size(0), valid_feats.size(1)), device=device)
+                graph.x = torch.cat([valid_feats, padding], dim=0)
+                
+        batch_graph = Batch.from_data_list(graphs).to(device)
+        graph_embeddings = self.gnn(batch_graph.x, batch_graph.edge_index, batch_graph.batch)
+        
+        # 3. Fuse embeddings
+        fused_embeddings = torch.cat([text_embeddings, graph_embeddings], dim=1)
+        
+        # 4. Final Classification
+        logits = self.fusion_classifier(fused_embeddings)
+        scores = torch.sigmoid(logits)
+        
+        return fused_embeddings, scores

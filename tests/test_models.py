@@ -70,6 +70,14 @@ def test_scream_detector_acoustic():
     result = detector.detect_acoustic(scream_audio, sr)
     assert isinstance(result, bool)
 
+def test_albert_fusion_dimensionality():
+    encoder = TextEncoder(model_name="albert-base-v2")
+    embeds, scores = encoder(["He hit me hard!"])
+    
+    # ALBERT base hidden dim is 768. GNN outputs 256. Total = 1024
+    assert embeds.shape == (1, 1024)
+    assert 0.0 <= scores.item() <= 1.0
+
 
 # ============================================================
 # Phase 4: Enhanced CMAG-v2 Fusion Tests (passing)
