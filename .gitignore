@@ -2,9 +2,19 @@
 .agent/
 agent/
 references/
+.local_tools/
 
-# Large Data (Ignored)
+# Large Data & Documentation (Ignored)
 datasets/
+docs/
+G3_19/
+paper/
+IEEEpaper/
+tectonic.zip
+tectonic_bin/
+FYP_ppt/
+sample_testing_audio/
+
 
 # Python Virtual Environments
 .venv/
@@ -23,6 +33,12 @@ __pycache__/
 *.log
 *out*.txt
 *output*.txt
+*_err.txt
+*_results.txt
+logs/*
+!logs/.gitkeep
+tmp/
+saved_models/
 
 # Node.js / Frontend Builds
 node_modules/

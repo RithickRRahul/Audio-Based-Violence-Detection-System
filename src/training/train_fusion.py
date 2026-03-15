@@ -1,12 +1,14 @@
 import os
 import torch
 import torch.optim as optim
+import torch.optim as optim
 from sklearn.metrics import accuracy_score, f1_score
-from transformers import AutoModel, AutoTokenizer
 
 from src.config import SAVED_MODELS_DIR
 from src.models.audio_encoder import AudioEncoder
 from src.models.cmag_v2 import EnhancedCMAG
+from src.models.cmag_v2 import EnhancedCMAG
+from src.models.nlp_encoder import TextEncoder
 from src.data.cached_loader import get_cached_dataloaders
 from src.training.train_audio import FocalLoss
 
@@ -29,9 +31,9 @@ def train_fusion(epochs: int = 20, lr: float = 1e-3, patience: int = 5):
     
     text_model_path = os.path.join(SAVED_MODELS_DIR, "nlp_violence_expert")
     if os.path.exists(text_model_path):
-        print("[Fusion] Loading pre-trained RoBERTa Physical Distress Expert...")
-        tokenizer = AutoTokenizer.from_pretrained(text_model_path)
-        text_encoder = AutoModel.from_pretrained(text_model_path).to(device)
+        print("[Fusion] Loading pre-trained Pure BERT Physical Distress Expert...")
+        # TextEncoder automatically loads the BERT core and loads tokenizer
+        text_encoder = TextEncoder(model_name="bert-base-uncased").to(device)
     else:
         raise FileNotFoundError("Phase 3 NLP model not found. Run train_nlp.py first.")
         
@@ -44,6 +46,16 @@ def train_fusion(epochs: int = 20, lr: float = 1e-3, patience: int = 5):
     scheduler = optim.lr_scheduler.CosineAnnealingWarmRestarts(optimizer, T_0=5, T_mult=2, eta_min=1e-6)
     criterion = FocalLoss(gamma=2.0)
     
+    # Precompute dummy text embeddings to avoid running the heavy NLP and SpaCy GNN pipeline 140,000 times natively
+    print("[Fusion] Pre-computing text embeddings for simulated texts to speed up training...")
+    dummy_texts = {
+        "Help me!": text_encoder.get_embeddings(["Help me!"]).squeeze(0),
+        "Stop hitting me!": text_encoder.get_embeddings(["Stop hitting me!"]).squeeze(0),
+        "How are you today?": text_encoder.get_embeddings(["How are you today?"]).squeeze(0),
+        "Nice weather outside": text_encoder.get_embeddings(["Nice weather outside"]).squeeze(0),
+        "": text_encoder.get_embeddings([""]).squeeze(0),
+    }
+
     train_loader, test_loader = get_cached_dataloaders(batch_size=32)
     best_val_loss = float('inf')
     patience_counter = 0
@@ -64,10 +76,8 @@ def train_fusion(epochs: int = 20, lr: float = 1e-3, patience: int = 5):
                         fake_texts.append(random.choice(["Help me!", "Stop hitting me!"]) if random.random() < 0.4 else "")
                     else:
                         fake_texts.append(random.choice(["How are you today?", "Nice weather outside"]) if random.random() < 0.4 else "")
-                        
-                text_inputs = tokenizer(fake_texts, padding=True, truncation=True, max_length=128, return_tensors="pt").to(device)
-                text_outputs = text_encoder(**text_inputs)
-                text_emb = text_outputs.last_hidden_state[:, 0, :]
+                # Look up precomputed 768-D embeddings and stack
+                text_emb = torch.stack([dummy_texts[t] for t in fake_texts]).to(device)
             
             optimizer.zero_grad()
             output = cmag(audio_emb, text_emb)
@@ -95,9 +105,7 @@ def train_fusion(epochs: int = 20, lr: float = 1e-3, patience: int = 5):
                     else:
                         fake_texts.append(random.choice(["How are you today?", "Nice weather outside"]) if random.random() < 0.4 else "")
                 
-                text_inputs = tokenizer(fake_texts, padding=True, truncation=True, max_length=128, return_tensors="pt").to(device)
-                text_outputs = text_encoder(**text_inputs)
-                text_emb = text_outputs.last_hidden_state[:, 0, :]
+                text_emb = torch.stack([dummy_texts[t] for t in fake_texts]).to(device)
 
                 output = cmag(audio_emb, text_emb)
                 loss = criterion(output, labels)
@@ -117,7 +125,7 @@ def train_fusion(epochs: int = 20, lr: float = 1e-3, patience: int = 5):
             patience_counter = 0
             os.makedirs(SAVED_MODELS_DIR, exist_ok=True)
             torch.save(cmag.state_dict(), os.path.join(SAVED_MODELS_DIR, "cmag_v2.pth"))
-            print("  → Saved best CMAG model")
+            print("  -> Saved best CMAG model")
         else:
             patience_counter += 1
             if patience_counter >= patience:

@@ -28,7 +28,11 @@ def evaluate_individual_datasets(output_path: str = "docs/performance_metrics/do
         if os.path.exists(audio_path):
             audio_encoder.load_state_dict(torch.load(audio_path, map_location=device), strict=False)
         if os.path.exists(cmag_path):
-            cmag.load_state_dict(torch.load(cmag_path, map_location=device), strict=False)
+            state_dict = torch.load(cmag_path, map_location=device)
+            model_dict = cmag.state_dict()
+            pretrained_dict = {k: v for k, v in state_dict.items() if k in model_dict and v.shape == model_dict[k].shape}
+            model_dict.update(pretrained_dict)
+            cmag.load_state_dict(model_dict)
 
     loaders = {
         "VSD": load_vsd_dataset,
@@ -57,8 +61,15 @@ def evaluate_individual_datasets(output_path: str = "docs/performance_metrics/do
                 
                 # Audio encoding
                 audio_emb = audio_encoder(mels)
-                # Dummy text vector for audio-only ablation
-                text_emb = torch.zeros((mels.size(0), 768), device=device)
+                
+                # True empty text vector for accurate audio-only ablation
+                cmag_empty_emb = cmag.text_projection(torch.zeros(1, 768, device=device)) # Using CMAG's projection directly logic
+                
+                # Use TextEncoder to get the TRUE empty embedding for the batch size
+                from src.models.nlp_encoder import TextEncoder
+                text_encoder = TextEncoder().to(device)
+                text_emb = text_encoder.get_embeddings([""]).to(device)
+                text_emb = text_emb.repeat(mels.size(0), 1)
                 
                 # Fusion score
                 outputs = cmag(audio_emb, text_emb, return_features=False)

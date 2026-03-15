@@ -11,6 +11,7 @@ function App() {
   const [currentView, setCurrentView] = useState('INPUT'); // INPUT, PROCESSING, RESULTS
   const [audioUrl, setAudioUrl] = useState(null);
   const [resetTick, setResetTick] = useState(0);
+  const [showJson, setShowJson] = useState(false);
 
   // Live Microphone references moved up to App level for global control
   const mediaRecorderRef = useRef(null);
@@ -23,6 +24,7 @@ function App() {
     uploadControllerRef.current = controller;
     setCurrentView('PROCESSING');
     setResultsFeed([]);
+    setShowJson(false);
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
     }
@@ -35,6 +37,7 @@ function App() {
       setIsLiveStreaming(true);
       setCurrentView('PROCESSING');
       setResultsFeed([]);
+      setShowJson(false);
       if (audioUrl) {
         URL.revokeObjectURL(audioUrl);
         setAudioUrl(null);
@@ -177,6 +180,7 @@ function App() {
     setCurrentView('INPUT');
     setResultsFeed([]);
     setSystemState('SAFE');
+    setShowJson(false);
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
       setAudioUrl(null);
@@ -201,6 +205,7 @@ function App() {
     setCurrentView('INPUT');
     setResultsFeed([]);
     setSystemState('SAFE');
+    setShowJson(false);
     if (audioUrl) {
       URL.revokeObjectURL(audioUrl);
       setAudioUrl(null);
@@ -214,7 +219,7 @@ function App() {
         <div className="brand">
           <h1 className="brand-title">
             <Shield size={36} color="var(--accent-cyan)" />
-            CMAG-v2
+            CMAG
           </h1>
           <h2 className="brand-subtitle">Hybrid Violence Detection Engine</h2>
         </div>
@@ -261,7 +266,7 @@ function App() {
             </h2>
 
             <p style={{ color: 'var(--text-muted)' }}>
-              {isLiveStreaming ? "Speak into the microphone. Click stop when finished to analyze." : "Analyzing acoustic transients and semantic intent via CMAG-v2."}
+              {isLiveStreaming ? "Speak into the microphone. Click stop when finished to analyze." : "Analyzing acoustic transients and semantic intent via CMAG."}
             </p>
 
             <div style={{ display: 'flex', gap: '1rem', marginTop: '2rem' }}>
@@ -298,14 +303,57 @@ function App() {
               </button>
             </div>
 
-            {audioUrl && (
-              <div style={{ marginBottom: '1.5rem', padding: '1rem', backgroundColor: 'var(--bg-elevated)', borderRadius: '8px', border: '1px solid var(--border-subtle)' }}>
-                <h4 style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Source Audio Playback</h4>
-                <audio controls src={audioUrl} style={{ width: '100%', height: '40px', outline: 'none' }} />
-              </div>
-            )}
+            <div className="feed-container">
+              {audioUrl && (
+                <div style={{ padding: '1rem', backgroundColor: 'var(--bg-elevated)', borderRadius: '8px', border: '1px solid var(--border-subtle)', flexShrink: 0 }}>
+                  <h4 style={{ marginBottom: '1rem', color: 'var(--text-secondary)', fontSize: '0.85rem', textTransform: 'uppercase', letterSpacing: '1px' }}>Source Audio Playback</h4>
+                  <audio controls src={audioUrl} style={{ width: '100%', height: '40px', outline: 'none' }} />
+                </div>
+              )}
 
-            <ResultsTable feed={resultsFeed} />
+              <div style={{ flexShrink: 0 }}>
+                <ResultsTable feed={resultsFeed} />
+              </div>
+
+              <div style={{ display: 'flex', justifyContent: 'center', flexShrink: 0, marginTop: '0.5rem' }}>
+                <button
+                  className="btn-primary"
+                  onClick={() => setShowJson(!showJson)}
+                  style={{
+                    backgroundColor: 'transparent',
+                    color: '#ffffff',
+                    border: '1px solid var(--accent-cyan)',
+                    padding: '0.5rem 1.2rem',
+                    fontSize: '0.9rem',
+                    width: 'auto'
+                  }}
+                >
+                  {showJson ? 'Hide JSON' : 'View json'}
+                </button>
+              </div>
+
+              {showJson && (
+                <div className="json-viewer" style={{
+                  padding: '1.5rem',
+                  backgroundColor: 'rgba(0, 0, 0, 0.4)',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-subtle)',
+                  overflowX: 'auto',
+                  textAlign: 'left',
+                  flexShrink: 0
+                }}>
+                  <pre style={{
+                    margin: 0,
+                    color: 'var(--text-secondary)',
+                    fontSize: '0.85rem',
+                    whiteSpace: 'pre-wrap',
+                    fontFamily: 'monospace'
+                  }}>
+                    {JSON.stringify(resultsFeed, null, 2)}
+                  </pre>
+                </div>
+              )}
+            </div>
           </section>
         )}
       </main>

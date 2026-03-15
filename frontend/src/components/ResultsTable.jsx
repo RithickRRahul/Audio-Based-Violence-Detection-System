@@ -6,7 +6,7 @@ export default function ResultsTable({ feed }) {
         return (
             <div className="empty-state">
                 <Activity size={48} style={{ opacity: 0.3 }} />
-                <p>Awaiting inference data from CMAG-v2...</p>
+                <p>Awaiting inference data from CMAG...</p>
             </div>
         );
     }

@@ -90,8 +90,11 @@ def load_vsd_dataset(vsd_dir: str = VSD_DIR) -> tuple[list[str], list[int]]:
                 continue
             fpath = os.path.join(root, fname)
             fname_lower = fname.lower()
-            # Map: angry, fight, scream, gun → violent; others → safe
-            if any(kw in fname_lower for kw in ['angry', 'fight', 'scream', 'gun', 'violence', 'attack']):
+            # Map: noviolence → safe; angry, fight, scream, gun → violent
+            # Check 'noviolence' first to prevent 'violence' keyword matching it
+            if fname_lower.startswith('noviolence'):
+                labels.append(0)
+            elif any(kw in fname_lower for kw in ['angry', 'fight', 'scream', 'gun', 'violence', 'attack']):
                 labels.append(1)
             else:
                 labels.append(0)

@@ -88,6 +88,32 @@ class ScreamDetector:
         max_delta = np.max(energy_deltas)
         max_rms = np.max(rms)
         
-        is_impact = (max_delta > 0.05) and (max_rms > 0.08)
+        # Lower delta threshold to catch gunshots (which may have slightly smoother volume envelopes than punches)
+        # We can afford to be more permissive here because the downstream Spectral Flatness check is extremely rigid.
+        if not ((max_delta > 0.02) and (max_rms > 0.05)):
+            return False
+            
+        # It is a loud volume spike. Now verify it is an actual impact (noise) 
+        # and not a loud tonal noise (like a dog barking or a person shouting).
+        peak_frame = np.argmax(rms)
+        hop_length = 512 
+        peak_sample = peak_frame * hop_length
         
-        return bool(is_impact)
+        # Extract 100ms around the very tip of the spike
+        window_samples = int(0.1 * sr)
+        start_idx = max(0, peak_sample - window_samples//2)
+        end_idx = min(len(audio_segment), peak_sample + window_samples//2)
+        peak_audio = audio_segment[start_idx:end_idx]
+        
+        if len(peak_audio) < 100:
+            return False
+            
+        # True impacts (punches, gunshots) are highly flat (noise-like) and high-frequency.
+        # Harmonic bursts (dog barks, human shouts) are highly tonal (low flatness) and low-frequency.
+        flatness = np.mean(librosa.feature.spectral_flatness(y=peak_audio))
+        centroid = np.mean(librosa.feature.spectral_centroid(y=peak_audio, sr=sr))
+        
+        # A true impact should be noisy (flatness > 0.015) and sharp (centroid > 1500)
+        is_true_impact = (flatness > 0.015) and (centroid > 1500)
+        
+        return bool(is_true_impact)

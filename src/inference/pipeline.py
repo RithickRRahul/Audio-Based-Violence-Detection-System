@@ -68,6 +68,9 @@ class ViolenceDetectionPipeline:
         logger.info(f"Loading Whisper ({whisper_model})...", extra={"extra_info": {"model": whisper_model}})
         self.whisper_model = whisper.load_model(whisper_model, device=str(self.device))
         
+        # Pre-cache the true BERT embedding for empty speech to prevent out-of-distribution BatchNorm errors
+        self.empty_text_emb = self.text_encoder.get_embeddings([""]).to(self.device).detach()
+        
         logger.info("Pipeline Ready.")
     
     def load_weights(self, models_dir: str = SAVED_MODELS_DIR):
@@ -76,11 +79,20 @@ class ViolenceDetectionPipeline:
         cmag_path = os.path.join(models_dir, "cmag_v2.pth")
         
         if os.path.exists(audio_path):
-            self.audio_encoder.load_state_dict(torch.load(audio_path, map_location=self.device))
+            self.audio_encoder.load_state_dict(torch.load(audio_path, map_location=self.device), strict=False)
             logger.info(f"Loaded audio encoder from {audio_path}", extra={"extra_info": {"path": audio_path}})
         
         if os.path.exists(cmag_path):
-            self.cmag.load_state_dict(torch.load(cmag_path, map_location=self.device))
+            state_dict = torch.load(cmag_path, map_location=self.device)
+            model_dict = self.cmag.state_dict()
+            
+            # Filter out weights that have shape mismatches (e.g. text_projection due to dimension change)
+            pretrained_dict = {k: v for k, v in state_dict.items() if k in model_dict and v.shape == model_dict[k].shape}
+            if len(pretrained_dict) < len(state_dict):
+                logger.warning(f"Skipped {len(state_dict) - len(pretrained_dict)} mismatched weights in {cmag_path}")
+            
+            model_dict.update(pretrained_dict)
+            self.cmag.load_state_dict(model_dict)
             logger.info(f"Loaded CMAG-v2 from {cmag_path}", extra={"extra_info": {"path": cmag_path}})
     
     def _transcribe_segment(self, audio_segment: np.ndarray) -> str:
@@ -161,6 +173,10 @@ class ViolenceDetectionPipeline:
                 has_speech, vad_details = self.vad.has_speech(seg, sr)
             else:
                 has_speech = True
+                vad_details = {}
+                
+            # Detect absolute silence based on VAD's internal RMS energy check
+            is_silence = not has_speech and vad_details.get("reason") == "too_quiet"
             
             transcript = ""
             threat_score = 0.0
@@ -181,8 +197,8 @@ class ViolenceDetectionPipeline:
                     transcript = transcript if transcript else ""
                     
             if not has_speech:
-                # Bypass Whisper STT to save compute, use a zero-vector for CMAG fusion
-                text_emb = torch.zeros((1, 768), device=self.device)
+                # Use the mathematically correct pre-cached empty embedding from training
+                text_emb = self.empty_text_emb
                 threat_score = 0.0
             
             # Step 2d: Scream detection
@@ -194,7 +210,9 @@ class ViolenceDetectionPipeline:
             # We ALWAYS route to CMAG because CMAG holds the violence classification head.
             # If `has_speech` is false, it fuses the audio with the zero-vector, ensuring 
             # correct mathematical distribution.
-            if config["use_cmag"]:
+            if is_silence:
+                baseline_score = 0.0
+            elif config["use_cmag"]:
                 with torch.no_grad():
                     seg_score = self.cmag(audio_emb, text_emb, return_features=False)
                 baseline_score = seg_score.item()
@@ -226,7 +244,10 @@ class ViolenceDetectionPipeline:
                 temporal_analysis = {"trend": "bypass", "escalation_score": escalation_score}
             
             file_max_score = max(file_max_score, escalation_score, effective_score)
-            is_violent = escalation_score > 0.5
+            
+            # Use effective score to determine violence if temporal is bypassed, otherwise use escalation score
+            final_segment_score = escalation_score if config["use_temporal"] else effective_score
+            is_violent = final_segment_score > 0.5
             
             segment_results.append({
                 "segment_index": i,

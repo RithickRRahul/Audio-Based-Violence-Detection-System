@@ -29,7 +29,7 @@ def test_jigsaw_dataset_collate_and_forward():
     with torch.no_grad():
         embeddings, logits = model(collated['text'])
         
-    assert embeddings.shape == (3, 1024)
+    assert embeddings.shape == (3, 768)
     assert logits.shape == (3, 1)
 
 def test_weighted_loss_function():

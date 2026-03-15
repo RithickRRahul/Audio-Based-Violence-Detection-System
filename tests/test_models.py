@@ -74,9 +74,21 @@ def test_albert_fusion_dimensionality():
     encoder = TextEncoder(model_name="albert-base-v2")
     embeds, scores = encoder(["He hit me hard!"])
     
-    # ALBERT base hidden dim is 768. GNN outputs 256. Total = 1024
-    assert embeds.shape == (1, 1024)
-    assert 0.0 <= scores.item() <= 1.0
+    # TextEncoder now uses purely the transformer hidden dim = 768
+    assert embeds.shape == (1, 768)
+    assert 0.0 <= torch.sigmoid(scores).item() <= 1.0
+
+def test_bert_fusion_dimensionality():
+    """
+    Test driven development implementation verifying bert-base-uncased
+    can successfully route through correctly.
+    """
+    encoder = TextEncoder(model_name="bert-base-uncased")
+    embeds, scores = encoder(["I will completely destroy your life"])
+    
+    # BERT base hidden dim is 768.
+    assert embeds.shape == (1, 768)
+    assert 0.0 <= torch.sigmoid(scores).item() <= 1.0
 
 
 # ============================================================

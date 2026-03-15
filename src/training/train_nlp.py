@@ -12,7 +12,7 @@ from src.config import SAVED_MODELS_DIR
 from src.models.nlp_encoder import TextEncoder
 
 # Constants for NLP Training
-MODEL_NAME = "roberta-base"
+MODEL_NAME = "bert-base-uncased"
 BATCH_SIZE = 16
 EPOCHS = 3
 LEARNING_RATE = 2e-5
@@ -130,7 +130,7 @@ def main():
     val_loader = DataLoader(val_dataset, batch_size=BATCH_SIZE, collate_fn=collate_fn)
 
     # 3. Model Setup
-    print(f"Loading {MODEL_NAME} TextEncoder (with GNN Fusion)...")
+    print(f"Loading {MODEL_NAME} TextEncoder...")
     model = TextEncoder(model_name=MODEL_NAME)
     model = model.to(device)
 
@@ -164,8 +164,8 @@ def main():
 
             optimizer.zero_grad()
             
-            # TextEncoder dynamically processes text to dependency graphs
-            # and tokenizes strings internally under the hood. Returns (embeddings, logits)
+            # TextEncoder processes strings and passes through BERT
+            # Returns (embeddings, probabilities)
             _, logits = model(texts)
             
             loss = criterion(logits, targets)
@@ -217,12 +217,10 @@ def main():
             best_val_loss = val_loss
             print("Saving best model...")
             
-            # TextEncoder abstracts the HuggingFace model, so we extract it
             model.model.save_pretrained(OUTPUT_DIR)
             model.tokenizer.save_pretrained(OUTPUT_DIR)
             
-            # We must also save the GNN and Fusion Classifier separately
-            torch.save(model.gnn.state_dict(), os.path.join(OUTPUT_DIR, "gnn_expert.pth"))
+            # We must also save the Fusion Classifier separately
             torch.save(model.fusion_classifier.state_dict(), os.path.join(OUTPUT_DIR, "classifier_expert.pth"))
             
     # Final Report

@@ -16,7 +16,7 @@ HOP_LENGTH = 512
 
 # Model architecture dimensions
 AUDIO_EMBED_DIM = 128
-TEXT_EMBED_DIM = 768  # DistilBERT
+TEXT_EMBED_DIM = 768  # Pure BERT
 FUSION_HIDDEN_DIM = 128
 
 # Training hyperparameters

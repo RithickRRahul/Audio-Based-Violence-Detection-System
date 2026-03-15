@@ -24,7 +24,7 @@ class RuleBasedTemporalTracker:
             return {"trend": "stable", "escalation_score": 0.0, "prediction": "stable"}
             
         current = self.history[-1]
-        previous = self.history[-2] if len(self.history) > 1 else 0.0
+        previous = self.history[-2] if len(self.history) > 1 else current
         
         is_spike = current > 0.45 and previous < 0.4
         is_sustained = sum(1 for s in self.history if s > 0.5) >= 3

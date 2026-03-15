@@ -151,6 +151,9 @@ async def websocket_endpoint(websocket: WebSocket):
                     # Step 2b: FastVAD Check
                     has_speech, vad_details = pipeline.vad.has_speech(seg, sr)
                     
+                    # Detect absolute silence
+                    is_silence = not has_speech and vad_details.get("reason") == "too_quiet"
+                    
                     transcript = ""
                     threat_score = 0.0
                     
@@ -170,7 +173,7 @@ async def websocket_endpoint(websocket: WebSocket):
                             transcript = transcript if transcript else ""
                             
                     if not has_speech:
-                        text_emb = torch.zeros((1, 768), device=pipeline.device)
+                        text_emb = pipeline.empty_text_emb
                         threat_score = 0.0
                     
                     # Step 2d: Scream check
@@ -180,12 +183,22 @@ async def websocket_endpoint(websocket: WebSocket):
                     
                     # Step 2e: Adaptive Fusion
                     # We ALWAYS route to CMAG because CMAG holds the violence classification head.
-                    with torch.no_grad():
-                        seg_score = pipeline.cmag(audio_emb, text_emb, return_features=False)
-                    baseline_score = seg_score.item()
+                    if is_silence:
+                        baseline_score = 0.0
+                    else:
+                        with torch.no_grad():
+                            seg_score = pipeline.cmag(audio_emb, text_emb, return_features=False)
+                        baseline_score = seg_score.item()
                         
                     # Step 3: Temporal Tracking (Deterministic)
                     effective_score = baseline_score
+                    
+                    # Explicit Semantic Dampener:
+                    # If explicit benign speech is detected without acoustic anomalies, 
+                    # the NLP threat score should forcibly pull down any CMAG audio hallucinations
+                    if has_speech and transcript and threat_score < 0.4 and not (scream_acoustic or is_impact):
+                        effective_score = min(effective_score, float(threat_score) + 0.15)
+                        
                     if scream_acoustic or scream_text or threat_score > 0.6:
                         effective_score = max(effective_score, 0.85)
                     elif is_impact:

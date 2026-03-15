@@ -16,7 +16,7 @@ export default function LiveMicTile({ onStreamStart }) {
             </div>
 
             <p style={{ fontSize: '0.85rem', color: 'var(--text-muted)', marginBottom: '1.5rem', lineHeight: '1.4' }}>
-                Capture microphone packets and stream to the remote CMAG-v2 WebSocket engine in real-time chunks.
+                Capture microphone packets and stream to the remote CMAG WebSocket engine in real-time chunks.
             </p>
 
             <div style={{ marginTop: 'auto' }}>
